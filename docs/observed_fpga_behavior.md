@@ -180,3 +180,9 @@ The GN4124 advertises 1 MSI vector but requires the Multiple Message Enable fiel
 After setting this field, read the MSI data register to determine the actual vector offset (low 2 bits). Use this offset as the index into INT_CFG0-7 for routing interrupt sources.
 
 This behavior was determined by observing that the device does not generate interrupts without the MSI control register modification, and functions correctly after it.
+
+## 12. RSTOUT Toggle Warning
+
+**Do not toggle PCI_SYS_CFG_SYSTEM (BAR4+0x800) bits 15:14 (RSTOUT) while the driver is loaded.** This asserts/de-asserts the FPGA fabric reset. The FPGA may fail to recover — the firmware version register (BAR0+0x70) reads 0xFFFFFFFF indefinitely and the device becomes non-functional. A warm reboot does not fix this because the PCIe slot remains powered. Only a cold boot (full power off/on) forces the FPGA to reload its bitstream from flash and recover.
+
+This was observed when attempting to clear stuck VDMA DMA state by resetting the FPGA. The FPGA sometimes recovered after 100ms, sometimes never recovered. On the second attempt in the same session, the PCI device disappeared from the bus entirely and could not be rescanned.
