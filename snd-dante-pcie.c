@@ -3,7 +3,6 @@
 #include <linux/pci.h>
 #include <linux/interrupt.h>
 #include <linux/dma-mapping.h>
-#include <linux/delay.h>
 #include <linux/debugfs.h>
 #include <linux/miscdevice.h>
 #include <linux/seq_file.h>
@@ -46,7 +45,6 @@
 #define CHUNK_BYTES         (CHUNK_FRAMES * 4)
 
 #define MAX_BUF_BYTES       (512 * 128 * CHUNK_BYTES)
-
 #define DANTE_IOC_MAGIC     'D'
 #define DANTE_GET_INFO      _IOR(DANTE_IOC_MAGIC, 0, struct dante_card_info)
 
@@ -71,7 +69,10 @@ static char *id = SNDRV_DEFAULT_STR1;
 module_param(index, int, 0444);
 module_param(id, charp, 0444);
 
+static atomic_t card_counter = ATOMIC_INIT(0);
+
 struct dante_pcie {
+	int card_index;
 	struct pci_dev *pdev;
 	struct snd_card *card;
 	void __iomem *bar0;
@@ -105,6 +106,7 @@ struct dante_pcie {
 
 	unsigned int cur_period_size;
 	unsigned int cur_chunks;
+
 };
 
 static const struct {
@@ -536,6 +538,7 @@ static u32 compute_peak(const s32 *samples, unsigned int count)
 	for (i = 0; i < count; i++) {
 		s32 s = samples[i];
 		u32 a = (s < 0) ? (u32)(-s) : (u32)s;
+
 		if (a > peak)
 			peak = a;
 	}
@@ -637,8 +640,8 @@ static long dante_cdev_ioctl(struct file *f, unsigned int cmd, unsigned long arg
 	memset(&info, 0, sizeof(info));
 	info.firmware_version = d->fw_version;
 	info.sample_rate = d->sample_rate;
-	info.rx_channels = READ_ONCE(d->rx_channels);
-	info.tx_channels = READ_ONCE(d->tx_channels);
+	info.rx_channels = READ_ONCE(d->rx_channels) ?: d->max_channels;
+	info.tx_channels = READ_ONCE(d->tx_channels) ?: d->max_channels;
 	info.period_size = READ_ONCE(d->cur_period_size);
 	info.chunks_per_channel = READ_ONCE(d->cur_chunks);
 	info.channel_step = info.chunks_per_channel * CHUNK_BYTES;
@@ -704,7 +707,7 @@ static void dante_debugfs_init(struct dante_pcie *d)
 	struct dante_dbgfs_bar *b0, *b4;
 	struct dante_dbgfs_audio *arx, *atx;
 
-	d->dbgfs = debugfs_create_dir("dante-pcie", NULL);
+	d->dbgfs = debugfs_create_dir(d->miscdev_name, NULL);
 
 	b0 = devm_kzalloc(&d->pdev->dev, sizeof(*b0), GFP_KERNEL);
 	b4 = devm_kzalloc(&d->pdev->dev, sizeof(*b4), GFP_KERNEL);
@@ -740,10 +743,9 @@ static void dante_debugfs_init(struct dante_pcie *d)
 			    &dbgfs_meters_fops);
 }
 
+
 static int dante_cdev_register(struct dante_pcie *d)
 {
-	snprintf(d->miscdev_name, sizeof(d->miscdev_name),
-		 "dante-pcie");
 	d->miscdev.minor = MISC_DYNAMIC_MINOR;
 	d->miscdev.name  = d->miscdev_name;
 	d->miscdev.fops  = &dante_cdev_fops;
@@ -783,6 +785,7 @@ static int dante_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		return err;
 
 	d = card->private_data;
+	d->card_index = atomic_fetch_add(1, &card_counter);
 	d->pdev = pdev;
 	d->card = card;
 	spin_lock_init(&d->lock);
@@ -819,7 +822,6 @@ static int dante_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		 d->fw_version, d->sample_rate, d->max_channels);
 
 	iowrite32(0, d->bar0 + FPGA_CSR);
-	msleep(1);
 	iowrite32(0x0000ffff, d->bar0 + FPGA_EVENT_CLR);
 	iowrite32(0x00000007, d->bar0 + FPGA_REG_CTRL);
 	iowrite32(0x0000ffff, d->bar0 + FPGA_EVENT_EN);
@@ -848,6 +850,9 @@ static int dante_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	snd_pcm_set_ops(pcm, SNDRV_PCM_STREAM_CAPTURE, &dante_pcm_ops);
 	snd_pcm_set_managed_buffer_all(pcm, SNDRV_DMA_TYPE_DEV,
 				       &pdev->dev, MAX_BUF_BYTES, MAX_BUF_BYTES);
+
+	snprintf(d->miscdev_name, sizeof(d->miscdev_name),
+		 "dante-pcie%d", d->card_index);
 
 	dante_debugfs_init(d);
 

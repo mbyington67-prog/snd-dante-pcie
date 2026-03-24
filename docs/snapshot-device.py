@@ -19,7 +19,16 @@ import sys
 import time
 from datetime import datetime
 
-DEBUGFS = "/sys/kernel/debug/dante-pcie"
+def find_debugfs():
+    import glob
+
+    dirs = sorted(glob.glob("/sys/kernel/debug/dante-pcie[0-9]*"))
+    if dirs:
+        return dirs[0]
+    return "/sys/kernel/debug/dante-pcie"
+
+
+DEBUGFS = find_debugfs()
 OUTPUT_DIR = os.path.dirname(os.path.abspath(__file__))
 
 BAR0_REGISTERS = {

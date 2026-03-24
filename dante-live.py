@@ -15,7 +15,16 @@ import time
 
 import numpy as np
 
-DEVICE_PATH = "/dev/dante-pcie"
+def find_device():
+    import glob
+
+    devs = sorted(glob.glob("/dev/dante-pcie[0-9]*"))
+    if devs:
+        return devs[0]
+    return None
+
+
+DEVICE_PATH = find_device()
 DANTE_IOC_GET_INFO = 0x80404400
 
 
@@ -153,8 +162,8 @@ def main(screen):
     info = CardInfo()
     fcntl.ioctl(device_fd, DANTE_IOC_GET_INFO, info)
 
-    rx_audio = mmap.mmap(device_fd, info.rx_buffer_size, mmap.MAP_SHARED, mmap.PROT_READ, offset=0)
-    tx_audio = mmap.mmap(device_fd, info.tx_buffer_size, mmap.MAP_SHARED, mmap.PROT_READ, offset=4096)
+    rx_audio = None
+    tx_audio = None
 
     rx_names = {}
     tx_names = {}
@@ -185,11 +194,20 @@ def main(screen):
         fcntl.ioctl(device_fd, DANTE_IOC_GET_INFO, info)
         frame_count += 1
 
+        if not rx_audio and info.rx_buffer_size > 0:
+            rx_audio = mmap.mmap(device_fd, info.rx_buffer_size,
+                                 mmap.MAP_SHARED, mmap.PROT_READ, offset=0)
+        if not tx_audio and info.tx_buffer_size > 0:
+            tx_audio = mmap.mmap(device_fd, info.tx_buffer_size,
+                                 mmap.MAP_SHARED, mmap.PROT_READ, offset=4096)
+
         key = screen.getch()
         while key != -1:
             if key == ord("q"):
-                rx_audio.close()
-                tx_audio.close()
+                if rx_audio:
+                    rx_audio.close()
+                if tx_audio:
+                    tx_audio.close()
                 os.close(device_fd)
                 return
             elif key == ord("a"):
@@ -255,8 +273,10 @@ def main(screen):
         tx_visible = visible_channels(info.tx_channels, current_tx_names)
 
         if frame_count % 3 == 0:
-            rx_peaks = compute_peaks(rx_audio, info.rx_channels, info.channel_step, rx_visible[:visible_rows] if not side_by_side else rx_visible)
-            tx_peaks = compute_peaks(tx_audio, info.tx_channels, info.channel_step, tx_visible[:visible_rows] if not side_by_side else tx_visible)
+            if rx_audio and info.rx_channels and info.channel_step:
+                rx_peaks = compute_peaks(rx_audio, info.rx_channels, info.channel_step, rx_visible[:visible_rows] if not side_by_side else rx_visible)
+            if tx_audio and info.tx_channels and info.channel_step:
+                tx_peaks = compute_peaks(tx_audio, info.tx_channels, info.channel_step, tx_visible[:visible_rows] if not side_by_side else tx_visible)
 
         def build_channel_lines(visible, peaks, names, subscriptions, x_offset, this_panel_width, has_subscriptions=False):
             longest_name = max((len(names.get(n, str(n))) for n in visible), default=10)
@@ -391,9 +411,8 @@ def main(screen):
 
 
 if __name__ == "__main__":
-    if not os.path.exists(DEVICE_PATH):
-        print(f"{DEVICE_PATH} not found")
-        print("Run: sudo insmod dante-chardev.ko")
+    if not DEVICE_PATH:
+        print("No /dev/dante-pcie* device found")
         sys.exit(1)
     try:
         curses.wrapper(main)
