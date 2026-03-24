@@ -8,10 +8,10 @@ import json
 import math
 import mmap
 import os
-import select
 import subprocess
 import sys
 import threading
+import time
 
 import numpy as np
 
@@ -75,11 +75,18 @@ def peak_to_db(peak):
     return 20.0 * math.log10(peak / 0x7FFFFF00)
 
 
-def compute_peaks(audio_map, channel_count, channel_step):
+def compute_peaks(audio_map, channel_count, channel_step, channels=None):
     samples_per_channel = channel_step // 4
-    buffer = np.frombuffer(audio_map, dtype=np.int32).reshape(channel_count, samples_per_channel)
-    raw_peaks = np.max(np.abs(buffer), axis=1)
-    return {channel + 1: int(raw_peaks[channel]) for channel in range(channel_count)}
+    if channels is None:
+        buf = np.frombuffer(audio_map, dtype=np.int32).reshape(channel_count, samples_per_channel)
+        raw_peaks = np.max(np.abs(buf), axis=1)
+        return {ch + 1: int(raw_peaks[ch]) for ch in range(channel_count)}
+    peaks = {}
+    for ch in channels:
+        offset = (ch - 1) * samples_per_channel
+        chunk = np.frombuffer(audio_map, dtype=np.int32, count=samples_per_channel, offset=offset * 4)
+        peaks[ch] = int(np.max(np.abs(chunk)))
+    return peaks
 
 
 class Line:
@@ -130,7 +137,6 @@ class Line:
 def main(screen):
     curses.curs_set(0)
     screen.nodelay(True)
-    screen.timeout(0)
 
     curses.start_color()
     curses.use_default_colors()
@@ -166,12 +172,18 @@ def main(screen):
     show_all = True
     scroll = 0
     force_layout = None
-
-    poller = select.poll()
-    poller.register(device_fd, select.POLLIN)
+    fps_modes = [120, 60, 30, 10]
+    fps_index = 0
+    frame_count = 0
+    rx_peaks = {}
+    tx_peaks = {}
 
     while True:
-        poller.poll(100)
+        fps = fps_modes[fps_index]
+        screen.timeout(1000 // fps)
+
+        fcntl.ioctl(device_fd, DANTE_IOC_GET_INFO, info)
+        frame_count += 1
 
         key = screen.getch()
         while key != -1:
@@ -196,6 +208,8 @@ def main(screen):
                 scroll = 0
             elif key == ord("G"):
                 scroll = 99999
+            elif key == ord("f"):
+                fps_index = (fps_index + 1) % len(fps_modes)
             elif key == ord("s"):
                 if force_layout is None:
                     force_layout = "side"
@@ -206,15 +220,12 @@ def main(screen):
             key = screen.getch()
         terminal_height, terminal_width = screen.getmaxyx()
 
-        fcntl.ioctl(device_fd, DANTE_IOC_GET_INFO, info)
-
-        rx_peaks = compute_peaks(rx_audio, info.rx_channels, info.channel_step)
-        tx_peaks = compute_peaks(tx_audio, info.tx_channels, info.channel_step)
-
         with names_lock:
             current_rx_names = dict(rx_names)
             current_tx_names = dict(tx_names)
             current_rx_subscriptions = dict(rx_subscriptions)
+
+        visible_rows = terminal_height - 4
 
         srate_index = (info.firmware_version >> 28) & 0xF
         sample_rate = SRATE_TABLE.get(srate_index, 0)
@@ -235,8 +246,20 @@ def main(screen):
             tx_panel_width = terminal_width
             panel_width = terminal_width
 
-        def build_channel_lines(peaks, names, subscriptions, x_offset, this_panel_width, has_subscriptions=False):
-            longest_name = max((len(names.get(n, str(n))) for n in range(1, len(peaks) + 1)), default=10)
+        def visible_channels(channel_count, names):
+            if show_all:
+                return list(range(1, channel_count + 1))
+            return [ch for ch in range(1, channel_count + 1) if names.get(ch, str(ch)) != str(ch)]
+
+        rx_visible = visible_channels(info.rx_channels, current_rx_names)
+        tx_visible = visible_channels(info.tx_channels, current_tx_names)
+
+        if frame_count % 3 == 0:
+            rx_peaks = compute_peaks(rx_audio, info.rx_channels, info.channel_step, rx_visible[:visible_rows] if not side_by_side else rx_visible)
+            tx_peaks = compute_peaks(tx_audio, info.tx_channels, info.channel_step, tx_visible[:visible_rows] if not side_by_side else tx_visible)
+
+        def build_channel_lines(visible, peaks, names, subscriptions, x_offset, this_panel_width, has_subscriptions=False):
+            longest_name = max((len(names.get(n, str(n))) for n in visible), default=10)
             nw = min(longest_name, this_panel_width - 20)
 
             longest_subscription = 0
@@ -249,20 +272,21 @@ def main(screen):
             mw = max(5, this_panel_width - nw - padding - subscription_space)
             mc = nw + 5
             result = []
-            channel_count = len(peaks)
-            for channel_number in range(1, channel_count + 1):
+            for channel_number in visible:
                 peak = peaks.get(channel_number, 0)
                 decibels = peak_to_db(peak)
                 name = names.get(channel_number, str(channel_number))
-
-                if not show_all and peak == 0 and name == str(channel_number):
-                    continue
 
                 line = Line()
                 color = 6 if peak > 0 else 5
                 line.text(x_offset, f"{channel_number:3d} {name:<{nw}s}", color)
                 line.set_meter(x_offset + mc, mw, decibels)
-                decibels_string = f"{decibels:6.1f}" if decibels > -100 else "  -inf"
+                if peak == 0:
+                    decibels_string = "  -inf"
+                elif decibels < -60:
+                    decibels_string = "  <-60"
+                else:
+                    decibels_string = f"{decibels:5.0f}"
                 line.text(x_offset + mc + mw + 1, decibels_string, 1 if peak > 0 else 5)
                 if subscriptions:
                     subscription = subscriptions.get(channel_number, "")
@@ -272,9 +296,9 @@ def main(screen):
                 result.append(line)
             return result
 
-        rx_lines = build_channel_lines(rx_peaks, current_rx_names, current_rx_subscriptions, 0, rx_panel_width, has_subscriptions=True)
+        rx_lines = build_channel_lines(rx_visible, rx_peaks, current_rx_names, current_rx_subscriptions, 0, rx_panel_width, has_subscriptions=True)
         tx_x_offset = (rx_panel_width + 1) if side_by_side else 0
-        tx_lines = build_channel_lines(tx_peaks, current_tx_names, {}, tx_x_offset, tx_panel_width)
+        tx_lines = build_channel_lines(tx_visible, tx_peaks, current_tx_names, {}, tx_x_offset, tx_panel_width)
 
         if side_by_side:
             lines = []
@@ -358,7 +382,7 @@ def main(screen):
         layout_label = "auto" if force_layout is None else force_layout
         try:
             screen.addstr(terminal_height - 1, 0,
-                          f" q:quit  a:filter  s:layout({layout_label})  r:refresh  j/k:scroll  [{scroll_percent}%] ",
+                          f" q:quit  a:filter  f:{fps}fps  s:layout({layout_label})  r:refresh  j/k:scroll  [{scroll_percent}%] ",
                           curses.color_pair(5) | curses.A_REVERSE)
         except curses.error:
             pass
