@@ -322,7 +322,7 @@ def main(screen):
             lines = []
             lines.append(Line().text(0, "RX (from network)", 7, curses.A_BOLD))
             lines.extend(rx_lines)
-            lines.append(Line().text(0, "─" * min(terminal_width - 1, 80), 5))
+            lines.append(Line().text(0, "─" * (terminal_width - 1), 5))
             lines.append(Line().text(0, "TX (to network)", 7, curses.A_BOLD))
             lines.extend(tx_lines)
 
